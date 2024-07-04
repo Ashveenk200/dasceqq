@@ -3,17 +3,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import mysql.connector
 from datetime import datetime
+import re
 
-# MySQL connection setup for the database
+# MySQL connection setup for a single database
 def init_connection():
     return mysql.connector.connect(
         host="localhost",
         user="root",
-        password="ASHveen002@",
+        password="ASHveen002@",  # replace with your actual MySQL root password
         database="testbotdb"
     )
 
-# Function to insert a new conversation into the botssdata table
+# Function to insert a new conversation into the database
 def insert_conversation(conn, user_id, name, user_question, bot_answer, time):
     cursor = conn.cursor()
     cursor.execute(
@@ -23,7 +24,7 @@ def insert_conversation(conn, user_id, name, user_question, bot_answer, time):
     conn.commit()
     cursor.close()
 
-# Function to insert a new user into the users table
+# Function to insert a new user into the database
 def insert_user(conn, user_id, name):
     cursor = conn.cursor()
     cursor.execute(
@@ -33,19 +34,15 @@ def insert_user(conn, user_id, name):
     conn.commit()
     cursor.close()
 
-# Function to query the knowledge base for an answer
-def query_knowledge_base(conn, question):
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT answer FROM knowledge WHERE question LIKE %s",
-        ("%"+question+"%",)
-    )
-    result = cursor.fetchone()
+# Predefined SQL queries
+def predefined_query(query, user_id):
+    conn = init_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(query, (user_id,))
+    result = cursor.fetchall()
     cursor.close()
-    if result:
-        return result[0]
-    else:
-        return None
+    conn.close()
+    return result
 
 # Streamlit app title
 st.title("Dasceq Chatbot")
@@ -71,10 +68,10 @@ st.markdown("""
     align-self: flex-start;
 }
 .chat-container {
-    display: flex;
-    flex-direction: column-reverse;
-    height: 400px;
-    overflow-y: scroll;
+  display: flex;
+  flex-direction: column-reverse;  
+  height: 4px;
+  overflow-y: scroll;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -94,6 +91,8 @@ if 'start_time' not in st.session_state:
     st.session_state.start_time = None
 if 'chat_history_ids' not in st.session_state:
     st.session_state.chat_history_ids = None
+if 'selected_table' not in st.session_state:
+    st.session_state.selected_table = None
 
 # Connect to the database
 conn = init_connection()
@@ -110,45 +109,75 @@ if st.session_state.user_id is None:
             st.session_state.name = name
             st.session_state.start_time = datetime.now()
             insert_user(conn, user_id, name)
-            st.success(f"Hi {name}, what do you want to ask?")
+            st.success(f"Hi {name}, please select a table to search.")
+
+# Table selection after user login
+if st.session_state.name is not None and st.session_state.selected_table is None:
+    tables = ['payments', 'calls', 'customers']  # Add more tables as needed
+    st.session_state.selected_table = st.selectbox('Select a table to search:', tables)
+    st.success(f"Table {st.session_state.selected_table} selected. You can now ask your question.")
 
 # Function to generate response
 def generate_response(user_message):
     st.session_state.messages.append({"role": "user", "content": user_message})
 
-    # Query the knowledge base first
-    kb_answer = query_knowledge_base(conn, user_message)
+    # Encode conversation history
+    new_user_input_ids = tokenizer.encode(user_message + tokenizer.eos_token, return_tensors='pt')
 
-    if kb_answer:
-        bot_message = kb_answer
+    # Append the new user input tokens to the chat history
+    if len(st.session_state.messages) == 1:
+        bot_input_ids = new_user_input_ids
     else:
-        # Encode conversation history
-        new_user_input_ids = tokenizer.encode(user_message + tokenizer.eos_token, return_tensors='pt')
-
-        # Append the new user input tokens to the chat history
-        if len(st.session_state.messages) == 1:
-            bot_input_ids = new_user_input_ids
+        if st.session_state.chat_history_ids is not None:
+            bot_input_ids = torch.cat([st.session_state.chat_history_ids, new_user_input_ids], dim=-1)
         else:
-            if st.session_state.chat_history_ids is not None:
-                bot_input_ids = torch.cat([st.session_state.chat_history_ids, new_user_input_ids], dim=-1)
-            else:
-                bot_input_ids = new_user_input_ids
+            bot_input_ids = new_user_input_ids
 
-        # Generate a response
-        chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
+    # Generate a response
+    chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
 
-        # Decode the response
-        bot_message = tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)
-        st.session_state.chat_history_ids = chat_history_ids
+    # Decode the response
+    bot_message = tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)
+
+    # Check if the response contains keywords indicating an unsuccessful answer
+    if any(word in bot_message.lower() for word in ["sorry", "can't", "not"]):
+        bot_message = handle_fallback(user_message)
 
     st.session_state.messages.append({"role": "assistant", "content": bot_message})
+
+    # Update the chat history
+    st.session_state.chat_history_ids = chat_history_ids
 
     # Store the message and response in the database
     end_time = datetime.now()
     insert_conversation(conn, st.session_state.user_id, st.session_state.name, user_message, bot_message, end_time)
 
+# Fallback to SQL queries if the bot response is not satisfactory
+def handle_fallback(user_message):
+    user_id = st.session_state.user_id
+    table = st.session_state.selected_table
+
+    # Identify the keyword in the user message
+    keywords = {
+        "max": "SELECT MAX(amount) as result FROM {} WHERE user_id = %s",
+        "min": "SELECT MIN(amount) as result FROM {} WHERE user_id = %s",
+        "average": "SELECT AVG(amount) as result FROM {} WHERE user_id = %s",
+        "count": "SELECT COUNT(*) as result FROM {} WHERE user_id = %s",
+        "sum": "SELECT SUM(amount) as result FROM {} WHERE user_id = %s"
+    }
+
+    for keyword, query_template in keywords.items():
+        if keyword in user_message.lower():
+            query = query_template.format(table)
+            result = predefined_query(query, user_id)
+            if result:
+                return f"The {keyword} amount is {result[0]['result']}."
+    
+    # If no keyword is matched, ask user to clarify
+    return "Could you please clarify your request or provide more details?"
+
 # Create a form for user input
-if st.session_state.name is not None:
+if st.session_state.name is not None and st.session_state.selected_table is not None:
     with st.form(key='chat_form', clear_on_submit=True):
         input_message = st.text_input(f"{st.session_state.name}:", key="input_message")
         submit_button = st.form_submit_button("Send")
