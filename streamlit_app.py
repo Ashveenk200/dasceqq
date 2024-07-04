@@ -1,5 +1,5 @@
 import streamlit as st
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import BlenderbotTokenizer, BlenderbotForConditionalGeneration
 import torch
 import mysql.connector
 from datetime import datetime
@@ -9,7 +9,7 @@ def init_connection():
     return mysql.connector.connect(
         host="sql12.freesqldatabase.com",
         user="sql12717887",
-        password="RYIGenrwdP",  # replace with your actual MySQL password
+        password="RYIGenrwdP",
         database="sql12717887",
         port=3306
     )
@@ -76,9 +76,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Hugging Face tokenizer and model for DialoGPT
-tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
-model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-medium")
+# Initialize Hugging Face tokenizer and model for BlenderBot
+tokenizer = BlenderbotTokenizer.from_pretrained("facebook/blenderbot-400M-distill")
+model = BlenderbotForConditionalGeneration.from_pretrained("facebook/blenderbot-400M-distill")
 
 # Initialize session state
 if 'messages' not in st.session_state:
@@ -115,32 +115,16 @@ if st.session_state.user_id is None:
 def generate_response(user_message):
     st.session_state.messages.append({"role": "user", "content": user_message})
 
-    # Encode conversation history
-    new_user_input_ids = tokenizer.encode(user_message + tokenizer.eos_token, return_tensors='pt')
-
-    # Append the new user input tokens to the chat history
-    if len(st.session_state.messages) == 1:
-        bot_input_ids = new_user_input_ids
-    else:
-        if st.session_state.chat_history_ids is not None:
-            bot_input_ids = torch.cat([st.session_state.chat_history_ids, new_user_input_ids], dim=-1)
-        else:
-            bot_input_ids = new_user_input_ids
-
-    # Generate a response
-    chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
-
-    # Decode the response
-    bot_message = tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)
+    # Tokenize input and generate response
+    inputs = tokenizer([user_message], return_tensors='pt')
+    reply_ids = model.generate(**inputs)
+    bot_message = tokenizer.batch_decode(reply_ids, skip_special_tokens=True)[0]
 
     # Check if the response contains keywords indicating an unsuccessful answer
     if any(word in bot_message.lower() for word in ["sorry", "can't", "not"]):
         bot_message = handle_fallback(user_message)
 
     st.session_state.messages.append({"role": "assistant", "content": bot_message})
-
-    # Update the chat history
-    st.session_state.chat_history_ids = chat_history_ids
 
     # Store the message and response in the database
     end_time = datetime.now()
