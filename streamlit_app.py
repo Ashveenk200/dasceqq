@@ -3,6 +3,8 @@ from transformers import BlenderbotTokenizer, BlenderbotForConditionalGeneration
 import torch
 import mysql.connector
 from datetime import datetime
+import os
+import psutil
 
 # MySQL connection setup
 def init_connection():
@@ -77,8 +79,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize Hugging Face tokenizer and model for BlenderBot
-tokenizer = BlenderbotTokenizer.from_pretrained("facebook/blenderbot-400M-distill")
-model = BlenderbotForConditionalGeneration.from_pretrained("facebook/blenderbot-400M-distill")
+tokenizer = BlenderbotTokenizer.from_pretrained("facebook/blenderbot-90M")
+model = BlenderbotForConditionalGeneration.from_pretrained("facebook/blenderbot-90M")
 
 # Initialize session state
 if 'messages' not in st.session_state:
