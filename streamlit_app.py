@@ -3,15 +3,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import mysql.connector
 from datetime import datetime
-import re
 
-# MySQL connection setup for a single database
+# MySQL connection setup
 def init_connection():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="ASHveen002@",  # replace with your actual MySQL root password
-        database="testbotdb"
+        host="sql12.freesqldatabase.com",
+        user="sql12717887",
+        password="RYIGenrwdP",  # replace with your actual MySQL password
+        database="sql12717887",
+        port=3306
     )
 
 # Function to insert a new conversation into the database
@@ -34,7 +34,7 @@ def insert_user(conn, user_id, name):
     conn.commit()
     cursor.close()
 
-# Predefined SQL queries
+# Predefined SQL queries for payment-related calculations
 def predefined_query(query, user_id):
     conn = init_connection()
     cursor = conn.cursor(dictionary=True)
@@ -109,13 +109,7 @@ if st.session_state.user_id is None:
             st.session_state.name = name
             st.session_state.start_time = datetime.now()
             insert_user(conn, user_id, name)
-            st.success(f"Hi {name}, please select a table to search.")
-
-# Table selection after user login
-if st.session_state.name is not None and st.session_state.selected_table is None:
-    tables = ['payments', 'calls', 'customers']  # Add more tables as needed
-    st.session_state.selected_table = st.selectbox('Select a table to search:', tables)
-    st.success(f"Table {st.session_state.selected_table} selected. You can now ask your question.")
+            st.success(f"Hi {name}, you can now ask your questions.")
 
 # Function to generate response
 def generate_response(user_message):
@@ -155,7 +149,7 @@ def generate_response(user_message):
 # Fallback to SQL queries if the bot response is not satisfactory
 def handle_fallback(user_message):
     user_id = st.session_state.user_id
-    table = st.session_state.selected_table
+    table = "payments"  # Specify the table to be used
 
     # Identify the keyword in the user message
     keywords = {
@@ -177,7 +171,7 @@ def handle_fallback(user_message):
     return "Could you please clarify your request or provide more details?"
 
 # Create a form for user input
-if st.session_state.name is not None and st.session_state.selected_table is not None:
+if st.session_state.name is not None:
     with st.form(key='chat_form', clear_on_submit=True):
         input_message = st.text_input(f"{st.session_state.name}:", key="input_message")
         submit_button = st.form_submit_button("Send")
